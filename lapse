@@ -1,0 +1,151 @@
+#!/usr/bin/bash
+# Generate desktop time lapse videos using scrot and ffmpeg/mencoder.
+# Usage:
+# lapse [options]
+# Options
+# -p Do not process frames.
+# -c Do not capture frames.
+# -m Use mencoder instead of ffmpeg to generate the video.
+# -f <fps> Frames per second (default: 2).
+# -s <speed_factor> Speed factor (e.g. 4 for 4x speed. Default: 30).
+# -d Do not delete temporal files on success
+# -o <file> Output file (default: /tmp/lapse/tlapse.mp4)
+# -t <path> Temporal path (default: /tmp/lapse).
+#
+# Note: Minimum fps is 1, and delay between frames must be an integar number.
+#
+# TODO: Error handling, cropping, fractional fps and delay...
+
+#--- Default parameters ---#
+# Capture images
+capture=true
+# Process images to generate final video
+process=true
+# Frames per second of the output video
+fps=2
+# Speed gain multiplier
+speed=30
+# Delete temporal files when finished
+delete=true
+# Use mencoder instead of ffmpeg
+use_mencoder=false
+# Output video file
+output=/tmp/lapse/video.mp4
+# Temporal files path
+tmp_path=/tmp/lapse
+
+# Prints help
+usage() {
+    echo 'lapse [options]'
+    echo 'Options'
+    echo '-h Print this help and exit.'
+    echo '-p Do not process frames.'
+    echo '-c Do not capture frames.'
+    echo '-m Use mencoder instead of ffmpeg to generate the video.'
+    echo '-f <fps> Frames per second (default: 2).'
+    echo '-s <speed_factor> Speed factor (e.g. 4 for 4x speed. Default: 30).'
+    echo '-d Do not delete temporal files on success'
+    echo '-o <file> Output file (default: /tmp/lapse/tlapse.mp4)'
+    echo '-t <path> Temporal path (default: /tmp/lapse).'
+    echo 
+    echo 'Note: Minimum fps is 1, and delay between frames must be an integar number.'
+}
+
+# Aborts
+abort() {
+    >&2 echo $*
+    usage
+    
+    exit 1
+}
+
+#--- SCRIPT ENTRY ---#
+
+# Process command line
+while getopts ":hpcmf:s:do:t:" arg; do
+    case $arg in
+        h)
+            usage
+            exit 0
+            ;;
+
+        p)
+            process=false
+            ;;
+
+        c)
+            capture=false
+            ;;
+
+        m)
+            use_mencoder=true
+            ;;
+
+        f)
+            fps=$optarg
+            ;;
+
+        s)
+            speed=$optarg
+            ;;
+
+        d)
+            delete=false
+            ;;
+
+        o)
+            output=$optarg
+            ;;
+
+        t)
+            tmp_path=$optarg
+            ;;
+
+        *)
+            abort Wrong command invocation!
+            ;;
+    esac
+done
+
+delay=$(($speed / $fps))
+echo fps = $fps, speed factor = $speed, delay = $delay
+
+mkdir -p $tmp_path
+
+# Capture
+if [ $capture == true ]; then
+    echo Capturing desktop, press CTRL+C to end
+    finish=false
+    trap finish=true SIGINT
+
+    frame=0
+    while [ $finish == false ]; do
+        filename=$(printf "$tmp_path/%08d.png" $frame)
+        /usr/bin/scrot $filename
+        echo $filename >> $tmp_path/files.txt
+        frame=$(( $frame + 1 ))
+        /usr/bin/sleep $delay
+    done
+fi
+
+# Compress
+if [ $process == true ]; then
+    echo Generating video
+    if [ use_mencoder == false ]; then
+        /usr/bin/ffmpeg -vf format=yuv420p -framerate $fps -i $tmp_path/%08d.png $output
+    else
+        /usr/bin/mencoder -of lavf -lavfopts format=mp4 -ovc x264 "mf://@${tmp_path}/files.txt" -mf fps=$fps -o $output
+    fi
+fi
+
+# Cleanup
+if [ $delete == true ]; then
+    echo Cleanup...
+    if [ -f $tmp_path ]; then
+        cat $tmp_path/files.txt | xargs rm -f
+        rm $tmp_path/files.txt
+        rmdir $tmp_path
+    fi
+fi
+echo Done!
+
